@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Manufacturing Transport Management Module
 
 Enterprise-style logistics and fleet management module for a manufacturing company.
@@ -32,3 +33,6 @@ npm run preview
 Preview: `http://127.0.0.1:4173`
 
 Set `MONGODB_URI` in `.env` to persist backend data. Without it, the API still runs and the frontend uses seeded in-memory data.
+=======
+# Enterprise-Transport-Management
+>>>>>>> b0156034edb4a392f96dfaea5be4f2aee176bae1
