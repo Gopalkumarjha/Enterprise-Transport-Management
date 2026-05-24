@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import cors from 'cors';
 import express from 'express';
 import mongoose from 'mongoose';
@@ -9,8 +10,20 @@ import { seed } from './seed.js';
 const app = express();
 const PORT = process.env.PORT || 5000;
 const MONGODB_URI = process.env.MONGODB_URI;
+const CLIENT_URLS = (process.env.CLIENT_URL || 'http://127.0.0.1:5173,http://127.0.0.1:4173')
+  .split(',')
+  .map((url) => url.trim())
+  .filter(Boolean);
 
-app.use(cors());
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || CLIENT_URLS.includes(origin)) {
+      callback(null, true);
+      return;
+    }
+    callback(new Error('Origin is not permitted by CORS configuration.'));
+  }
+}));
 app.use(express.json({ limit: '10mb' }));
 
 let databaseConnected = false;
@@ -27,6 +40,7 @@ app.get('/api/health', (_request, response) => {
     service: 'Manufacturing Transport Management API',
     status: 'ok',
     databaseConnected,
+    environment: process.env.NODE_ENV || 'development',
     timestamp: new Date().toISOString()
   });
 });
@@ -163,7 +177,7 @@ app.use((error, _request, response, _next) => {
 
 connectDatabase()
   .catch((error) => {
-    console.warn('MongoDB connection skipped or failed:', error.message);
+    console.warn('MongoDB connection failed:', error.message);
   })
   .finally(() => {
     app.listen(PORT, () => {

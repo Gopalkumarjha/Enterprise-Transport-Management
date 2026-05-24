@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   Activity,
@@ -45,6 +45,7 @@ import {
   XAxis,
   YAxis
 } from 'recharts';
+import { apiConfigured, createShipment, getShipments, updateShipmentStatus } from './api.js';
 import './styles.css';
 
 const roles = ['Admin', 'Transport Manager', 'Driver', 'Customer'];
@@ -226,6 +227,18 @@ function App() {
   const [role, setRole] = useState('Transport Manager');
   const [shipments, setShipments] = useState(shipmentsSeed);
   const [vehicleFormOpen, setVehicleFormOpen] = useState(false);
+  const [apiState, setApiState] = useState(apiConfigured ? 'loading' : 'demo');
+
+  useEffect(() => {
+    if (!apiConfigured) return;
+
+    getShipments()
+      .then((orders) => {
+        setShipments(orders);
+        setApiState('connected');
+      })
+      .catch(() => setApiState('unavailable'));
+  }, []);
 
   const metrics = useMemo(() => {
     const transit = shipments.filter((shipment) => shipment.status === 'In Transit').length;
@@ -240,24 +253,42 @@ function App() {
     };
   }, [shipments]);
 
-  const addShipment = () => {
+  const addShipment = async () => {
     const next = shipments.length + 522;
-    setShipments((current) => [
-      {
-        id: `MFG-SHP-2026-${String(next).padStart(4, '0')}`,
-        customer: 'New Manufacturing Order',
-        origin: 'Plant Dispatch Gate',
-        destination: 'Customer DC',
-        priority: 'Medium',
-        status: 'Pending',
-        vehicle: 'Unassigned',
-        driver: 'Awaiting allocation',
-        eta: 'Auto ETA pending',
-        cost: 0,
-        delayRisk: 14
-      },
-      ...current
-    ]);
+    const localShipment = {
+      id: `MFG-SHP-2026-${String(next).padStart(4, '0')}`,
+      customer: 'New Manufacturing Order',
+      origin: 'Plant Dispatch Gate',
+      destination: 'Customer DC',
+      priority: 'Medium',
+      status: 'Pending',
+      vehicle: 'Unassigned',
+      driver: 'Awaiting allocation',
+      eta: 'Auto ETA pending',
+      cost: 0,
+      delayRisk: 14
+    };
+
+    if (apiState === 'connected') {
+      try {
+        const savedShipment = await createShipment({
+          customer: localShipment.customer,
+          source: localShipment.origin,
+          destination: localShipment.destination,
+          priority: localShipment.priority,
+          status: localShipment.status,
+          eta: localShipment.eta,
+          costInr: localShipment.cost,
+          delayPredictionPercent: localShipment.delayRisk
+        });
+        setShipments((current) => [savedShipment, ...current]);
+      } catch {
+        setApiState('unavailable');
+        setShipments((current) => [localShipment, ...current]);
+      }
+    } else {
+      setShipments((current) => [localShipment, ...current]);
+    }
     setActive('Shipments');
   };
 
@@ -331,6 +362,7 @@ function App() {
                 >
                   {dark ? <Sun size={19} /> : <Moon size={19} />}
                 </button>
+                <ConnectionBadge state={apiState} />
                 <button onClick={addShipment} className="btn-primary">
                   <Plus size={18} /> New Shipment
                 </button>
@@ -341,7 +373,7 @@ function App() {
           <section className="p-4 sm:p-6">
             <RoleBanner role={role} />
             {active === 'Dashboard' && <Dashboard metrics={metrics} shipments={shipments} />}
-            {active === 'Shipments' && <Shipments shipments={shipments} setShipments={setShipments} />}
+            {active === 'Shipments' && <Shipments shipments={shipments} setShipments={setShipments} apiState={apiState} setApiState={setApiState} />}
             {active === 'Fleet' && <Fleet openForm={() => setVehicleFormOpen(true)} />}
             {active === 'Drivers' && <Drivers />}
             {active === 'Scheduling' && <Scheduling />}
@@ -456,15 +488,21 @@ function Dashboard({ metrics, shipments }) {
   );
 }
 
-function Shipments({ shipments, setShipments }) {
-  const advance = (id) => {
-    setShipments((current) =>
-      current.map((shipment) => {
-        if (shipment.id !== id) return shipment;
-        const next = statusFlow[Math.min(statusFlow.indexOf(shipment.status) + 1, statusFlow.length - 1)];
-        return { ...shipment, status: next };
-      })
-    );
+function Shipments({ shipments, setShipments, apiState, setApiState }) {
+  const advance = async (shipment) => {
+    const next = statusFlow[Math.min(statusFlow.indexOf(shipment.status) + 1, statusFlow.length - 1)];
+
+    if (apiState === 'connected' && shipment._id) {
+      try {
+        const updatedShipment = await updateShipmentStatus(shipment._id, next);
+        setShipments((current) => current.map((item) => (item.id === shipment.id ? updatedShipment : item)));
+        return;
+      } catch {
+        setApiState('unavailable');
+      }
+    }
+
+    setShipments((current) => current.map((item) => (item.id === shipment.id ? { ...item, status: next } : item)));
   };
   return (
     <div className="panel overflow-hidden">
@@ -497,7 +535,7 @@ function Shipments({ shipments, setShipments }) {
                 <td className="px-5 py-4">{shipment.driver}</td>
                 <td className="px-5 py-4">{shipment.eta}</td>
                 <td className="px-5 py-4">
-                  <button onClick={() => advance(shipment.id)} className="rounded-lg bg-slate-950 px-3 py-2 text-xs font-bold text-white dark:bg-mint dark:text-slate-950">
+                  <button onClick={() => advance(shipment)} className="rounded-lg bg-slate-950 px-3 py-2 text-xs font-bold text-white dark:bg-mint dark:text-slate-950">
                     Move status
                   </button>
                 </td>
@@ -820,6 +858,17 @@ function VehicleModal({ close }) {
       </div>
     </div>
   );
+}
+
+function ConnectionBadge({ state }) {
+  const details = {
+    connected: ['API Live', 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-mint'],
+    loading: ['Connecting', 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300'],
+    unavailable: ['Demo Fallback', 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300'],
+    demo: ['Demo Data', 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300']
+  };
+  const [label, tone] = details[state];
+  return <span className={classNames('hidden rounded-full px-3 py-2 text-xs font-bold sm:inline-flex', tone)}>{label}</span>;
 }
 
 function PanelTitle({ icon: Icon, title, action }) {
